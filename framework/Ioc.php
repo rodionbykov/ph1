@@ -598,7 +598,6 @@ class Ioc
                 continue;
             }
 
-            $property->setAccessible(true);
             $property->setValue($bean, $value);
         }
     }
