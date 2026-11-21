@@ -1,3 +1,6 @@
 .idea
 .junie
 .claude
+/vendor/
+/.phpunit.cache/
+.phpunit.result.cache

@@ -13,8 +13,8 @@ use RuntimeException;
 
 class Ioc
 {
-    protected string $fw1Version = '4.3.2';
-    protected string $di1Version = '4.3.2';
+    protected string $fw1Version = '0.1.0';
+    protected string $di1Version = '0.1.0';
     protected array $folderArray = [];
     protected string $folderList = '';
     protected array $config = [];
@@ -274,6 +274,16 @@ class Ioc
         return $reflection->newInstanceArgs($arguments);
     }
 
+    /**
+     * Returns the object that dependency injection should target. AOP
+     * subclasses return the proxied bean's underlying target so injection is
+     * applied to the real bean rather than the proxy.
+     */
+    protected function unwrapBean(object $bean): object
+    {
+        return $bean;
+    }
+
     protected function metadata(string $className): array
     {
         $reflection = new ReflectionClass($className);
@@ -518,13 +528,14 @@ class Ioc
         $reflection = $info['metadata']['reflection'];
         $arguments = $this->resolveConstructorArguments($beanName, $reflection, $constructorArgs + ($info['overrides'] ?? []));
         $bean = $this->construct($className, $arguments);
+        $target = $this->unwrapBean($bean);
 
-        $this->injectByProperties($beanName, $bean, $info['metadata']['properties'], $info['overrides'] ?? []);
-        $this->injectBySetters($beanName, $bean, $info['metadata']['setters'], $info['overrides'] ?? []);
-        $this->setupInitMethod($beanName, $bean);
+        $this->injectByProperties($beanName, $target, $info['metadata']['properties'], $info['overrides'] ?? []);
+        $this->injectBySetters($beanName, $target, $info['metadata']['setters'], $info['overrides'] ?? []);
+        $this->setupInitMethod($beanName, $target);
 
-        if (isset($this->config['initMethod']) && method_exists($bean, $this->config['initMethod'])) {
-            $bean->{$this->config['initMethod']}();
+        if (isset($this->config['initMethod']) && method_exists($target, $this->config['initMethod'])) {
+            $target->{$this->config['initMethod']}();
         }
 
         if ($info['isSingleton']) {

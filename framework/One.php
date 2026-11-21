@@ -115,6 +115,30 @@ class One
         return $this->beanFactory;
     }
 
+    /**
+     * Returns the name of the default subsystem, mirroring one.cfc.
+     */
+    public function getDefaultSubsystem(): string
+    {
+        if (!$this->usingSubsystems()) {
+            return '';
+        }
+
+        if (array_key_exists('subsystem', $this->requestState)) {
+            return (string) $this->requestState['subsystem'];
+        }
+
+        if (($this->framework['defaultSubsystem'] ?? '') === '') {
+            throw new SubsystemNotSpecifiedException(
+                'No subsystem specified and no default configured. ' .
+                'When using subsystems, every request should specify a subsystem or ' .
+                'defaultSubsystem should be configured.'
+            );
+        }
+
+        return $this->framework['defaultSubsystem'];
+    }
+
     public function getFramework(): array
     {
         return $this->framework;
@@ -569,6 +593,7 @@ class One
         }
 
         $this->applicationInitialized = true;
+        $GLOBALS['_fw1']['theFramework'] = $this;
         if ($this->framework['diEngine'] !== 'none') {
             $component = $this->framework['diComponent'];
             if ($this->framework['diEngine'] === 'aop1') {
@@ -702,5 +727,12 @@ class One
 }
 
 final class AbortControllerException extends RuntimeException
+{
+}
+
+/**
+ * Port of the CFML FW1.subsystemNotSpecified exception.
+ */
+final class SubsystemNotSpecifiedException extends RuntimeException
 {
 }

@@ -54,6 +54,11 @@ final class Aop extends Ioc
         return new BeanProxy($bean, $this->getInterceptorsForBean($className));
     }
 
+    protected function unwrapBean(object $bean): object
+    {
+        return $bean instanceof BeanProxy ? $bean->getTarget() : $bean;
+    }
+
     private function getInterceptorsForBean(string $className): array
     {
         $beanName = lcfirst((new \ReflectionClass($className))->getShortName());
