@@ -405,7 +405,10 @@ class Ioc
         }
 
         foreach ($this->folderArray as $folder) {
-            $this->discoverBeansInFolder(trim($folder));
+            $folder = trim($folder);
+            if ($folder !== '') {
+                $this->discoverBeansInFolder($folder);
+            }
         }
 
         $this->discoveryComplete = true;
