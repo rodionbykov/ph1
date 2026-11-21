@@ -530,16 +530,24 @@ class Ioc
         $bean = $this->construct($className, $arguments);
         $target = $this->unwrapBean($bean);
 
-        $this->injectByProperties($beanName, $target, $info['metadata']['properties'], $info['overrides'] ?? []);
-        $this->injectBySetters($beanName, $target, $info['metadata']['setters'], $info['overrides'] ?? []);
-        $this->setupInitMethod($beanName, $target);
-
-        if (isset($this->config['initMethod']) && method_exists($target, $this->config['initMethod'])) {
-            $target->{$this->config['initMethod']}();
-        }
-
         if ($info['isSingleton']) {
             $this->beanCache[$className] = $bean;
+        }
+
+        try {
+            $this->injectByProperties($beanName, $target, $info['metadata']['properties'], $info['overrides'] ?? []);
+            $this->injectBySetters($beanName, $target, $info['metadata']['setters'], $info['overrides'] ?? []);
+            $this->setupInitMethod($beanName, $target);
+
+            if (isset($this->config['initMethod']) && method_exists($target, $this->config['initMethod'])) {
+                $target->{$this->config['initMethod']}();
+            }
+        } catch (\Throwable $exception) {
+            if ($info['isSingleton'] && ($this->beanCache[$className] ?? null) === $bean) {
+                unset($this->beanCache[$className]);
+            }
+
+            throw $exception;
         }
 
         return $bean;
