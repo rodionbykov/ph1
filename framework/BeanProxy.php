@@ -16,15 +16,16 @@ final class BeanProxy
 
     public function __call(string $name, array $arguments): mixed
     {
-        $call = function (array $args): mixed {
-            return $this->target->{$this->currentMethod}(...$args);
-        };
+        return $this->invokeIntercepted($name, $arguments, fn (...$args): mixed => $this->target->{$name}(...$args));
+    }
 
-        $this->currentMethod = $name;
+    public function invokeIntercepted(string $name, array $arguments, callable $original, bool $lifecycle = false): mixed
+    {
+        $call = static fn (array $args): mixed => $original(...$args);
         $args = $arguments;
 
         foreach ($this->interceptors as $interceptor) {
-            if (!$this->matchesMethod($interceptor['methods'], $name)) {
+            if (!$this->matchesMethod($interceptor['methods'], $name, $lifecycle)) {
                 continue;
             }
 
@@ -35,15 +36,15 @@ final class BeanProxy
 
         $around = array_values(array_filter(
             $this->interceptors,
-            fn (array $interceptor): bool => $this->matchesMethod($interceptor['methods'], $name)
+            fn (array $interceptor): bool => $this->matchesMethod($interceptor['methods'], $name, $lifecycle)
                 && method_exists($interceptor['bean'], 'around')
         ));
 
         $runner = array_reduce(
             array_reverse($around),
-            function (callable $next, array $interceptor): callable {
-                return function (array $args) use ($interceptor, $next): mixed {
-                    return $interceptor['bean']->around($this->target, $this->currentMethod, $args, $next);
+            function (callable $next, array $interceptor) use ($name): callable {
+                return function (array $args) use ($interceptor, $next, $name): mixed {
+                    return $interceptor['bean']->around($this->target, $name, $args, $next);
                 };
             },
             $call
@@ -53,7 +54,7 @@ final class BeanProxy
             $result = $runner($args);
         } catch (Throwable $exception) {
             foreach ($this->interceptors as $interceptor) {
-                if ($this->matchesMethod($interceptor['methods'], $name) && method_exists($interceptor['bean'], 'onError')) {
+                if ($this->matchesMethod($interceptor['methods'], $name, $lifecycle) && method_exists($interceptor['bean'], 'onError')) {
                     $interceptor['bean']->onError($this->target, $name, $args, $exception);
                 }
             }
@@ -62,7 +63,7 @@ final class BeanProxy
         }
 
         foreach ($this->interceptors as $interceptor) {
-            if (!$this->matchesMethod($interceptor['methods'], $name) || !method_exists($interceptor['bean'], 'after')) {
+            if (!$this->matchesMethod($interceptor['methods'], $name, $lifecycle) || !method_exists($interceptor['bean'], 'after')) {
                 continue;
             }
 
@@ -90,16 +91,14 @@ final class BeanProxy
         return $this->target;
     }
 
-    private string $currentMethod = '';
-
-    private function matchesMethod(string $methods, string $name): bool
+    private function matchesMethod(string $methods, string $name, bool $lifecycle = false): bool
     {
         $methods = trim($methods);
         if ($methods === '' || $methods === '*') {
-            return true;
+            return !$lifecycle;
         }
 
         $allowed = array_map('trim', explode(',', $methods));
-        return in_array($name, $allowed, true);
+        return in_array(strtolower($name), array_map('strtolower', $allowed), true);
     }
 }

@@ -26,8 +26,9 @@ final class Aop extends Ioc
             $definition['regex'] = substr($beanName, 1, -1);
             $this->interceptorCache['regex'][] = $definition;
         } else {
-            $this->interceptorCache['name'][$beanName] ??= [];
-            $this->interceptorCache['name'][$beanName][] = $definition;
+            $key = strtolower($beanName);
+            $this->interceptorCache['name'][$key] ??= [];
+            $this->interceptorCache['name'][$key][] = $definition;
         }
 
         return $this;
@@ -47,11 +48,20 @@ final class Aop extends Ioc
     protected function construct(string $className, array $arguments = []): object
     {
         $bean = parent::construct($className, $arguments);
-        if (!$this->hasInterceptors($className)) {
+        $interceptors = $this->getInterceptorsForBean($className, $this->constructingBeanName);
+        if ($interceptors === []) {
             return $bean;
         }
 
-        return new BeanProxy($bean, $this->getInterceptorsForBean($className));
+        $proxy = new BeanProxy($bean, $interceptors);
+        if ($bean instanceof InternalCallAware) {
+            $bean->attachInternalCallInterceptor(
+                static fn (string $method, array $args, callable $original): mixed =>
+                    $proxy->invokeIntercepted($method, $args, $original)
+            );
+        }
+
+        return $proxy;
     }
 
     protected function unwrapBean(object $bean): object
@@ -59,16 +69,16 @@ final class Aop extends Ioc
         return $bean instanceof BeanProxy ? $bean->getTarget() : $bean;
     }
 
-    private function getInterceptorsForBean(string $className): array
+    private function getInterceptorsForBean(string $className, string $beanName): array
     {
-        $beanName = lcfirst((new \ReflectionClass($className))->getShortName());
-        $beanNames = $this->getAliases($className);
-        array_unshift($beanNames, $beanName);
-        $beanNames = array_values(array_unique($beanNames));
+        $beanNames = $beanName === ''
+            ? [lcfirst((new \ReflectionClass($className))->getShortName())]
+            : $this->getAliases($className, $beanName);
+        $beanNames = array_values(array_unique(array_map('strtolower', $beanNames)));
 
         $interceptors = [];
         foreach ($beanNames as $interceptedBeanName) {
-            foreach ($this->interceptorCache['name'][$interceptedBeanName] ?? [] as $definition) {
+            foreach ($this->interceptorCache['name'][strtolower($interceptedBeanName)] ?? [] as $definition) {
                 $interceptors[] = ['bean' => $this->getBean($definition['name']), 'methods' => $definition['methods']];
             }
         }
@@ -84,7 +94,7 @@ final class Aop extends Ioc
 
         $beanTypes = $this->getBeanTypes($className);
         foreach ($this->interceptorCache['type'] as $definition) {
-            if (in_array($definition['type'], $beanTypes, true)) {
+            if (in_array(strtolower($definition['type']), array_map('strtolower', $beanTypes), true)) {
                 $interceptors[] = ['bean' => $this->getBean($definition['name']), 'methods' => $definition['methods']];
             }
         }
@@ -92,16 +102,12 @@ final class Aop extends Ioc
         return $interceptors;
     }
 
-    private function hasInterceptors(string $className): bool
-    {
-        return $this->getInterceptorsForBean($className) !== [];
-    }
-
-    private function getAliases(string $className): array
+    private function getAliases(string $className, string $beanName): array
     {
         $aliases = [];
+        $definition = $this->getBeanInfo($beanName);
         foreach ($this->getBeanInfo()['beanInfo'] as $key => $info) {
-            if (($info['class'] ?? null) === $className) {
+            if (($info['class'] ?? null) === $className && ($info['name'] ?? null) === ($definition['name'] ?? null)) {
                 $aliases[] = $key;
             }
         }

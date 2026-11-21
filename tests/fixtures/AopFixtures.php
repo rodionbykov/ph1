@@ -14,6 +14,8 @@ declare(strict_types=1);
 namespace TestFixtures\Aop;
 
 use Framework\Inject;
+use Framework\InterceptsInternalCalls;
+use Framework\InternalCallAware;
 use RuntimeException;
 
 /**
@@ -45,10 +47,14 @@ final class StackLogService
 /**
  * Port of aop/services/Reverse.cfc (which extends stringService extends service).
  */
-final class ReverseService
+abstract class StringService
 {
     #[Inject]
-    private StackLogService $stackLogService;
+    protected StackLogService $stackLogService;
+}
+
+class ReverseService extends StringService
+{
 
     public function doForward(string $input): string
     {
@@ -81,13 +87,17 @@ final class BeforeInterceptor
     #[Inject]
     private StackLogService $stackLogService;
 
+    public function __construct(private string $name = 'before')
+    {
+    }
+
     public function before(object $target, string $method, array &$args): void
     {
-        $this->stackLogService->log('before');
+        $this->stackLogService->log($this->name);
 
         // CFML forwards named arguments (args.input); PHP's __call forwards a
         // positional argument list, so the first parameter is index 0.
-        if (array_key_exists(0, $args)) {
+        if (array_key_exists(0, $args) && is_string($args[0])) {
             $args[0] = 'before' . $args[0];
         }
     }
@@ -101,11 +111,17 @@ final class AfterInterceptor
     #[Inject]
     private StackLogService $stackLogService;
 
+    public function __construct(private string $name = 'after')
+    {
+    }
+
     public function after(object $target, string $method, array $args, mixed $result = null): mixed
     {
-        $this->stackLogService->log('after');
+        $this->stackLogService->log($this->name);
 
-        return $result;
+        return stripos($this->name, 'alter') !== false && $result !== null
+            ? $result . ',' . $this->name
+            : $result;
     }
 }
 
@@ -117,14 +133,18 @@ final class AroundInterceptor
     #[Inject]
     private StackLogService $stackLogService;
 
+    public function __construct(private string $name = 'around')
+    {
+    }
+
     public function around(object $target, string $method, array $args, callable $proceed): mixed
     {
-        $this->stackLogService->log('around');
+        $this->stackLogService->log($this->name);
 
         $result = $proceed($args);
 
         if (is_string($result)) {
-            return 'around,' . $result . ',around';
+            return $this->name . ',' . $result . ',' . $this->name;
         }
 
         return $result;
@@ -142,5 +162,78 @@ final class ErrorInterceptor
     public function onError(object $target, string $method, array $args, \Throwable $exception): void
     {
         $this->stackLogService->log('onError');
+    }
+}
+
+final class MethodRecordingInterceptor
+{
+    #[Inject]
+    private StackLogService $stackLogService;
+
+    public function around(object $target, string $method, array $args, callable $proceed): mixed
+    {
+        $this->stackLogService->log('enter:' . $method);
+        $result = $proceed($args);
+        $this->stackLogService->log('exit:' . $method);
+        return $result;
+    }
+}
+
+abstract class AdvancedReverse extends ReverseService implements InternalCallAware
+{
+    use InterceptsInternalCalls;
+
+    public function __construct(private StackLogService $callStack)
+    {
+    }
+
+    public function init(): void
+    {
+        $this->callStack->log('init');
+    }
+
+    public function configure(): void
+    {
+        $this->stackLogService->log('configure');
+    }
+
+    public function doWrap(string $input): string
+    {
+        $this->stackLogService->log('doWrap');
+        $front = $this->interceptInternalCall('doFront', [$input], $this->doFront(...));
+        return $this->interceptInternalCall('doRear', [$front], $this->doRear(...));
+    }
+
+    private function doFront(string $input): string
+    {
+        $this->stackLogService->log('doFront');
+        return 'front-' . $input;
+    }
+
+    private function doRear(string $input): string
+    {
+        $this->stackLogService->log('doRear');
+        return $input . '-rear';
+    }
+}
+
+final class AdvancedReverseService extends AdvancedReverse
+{
+    public function setStackLogService(StackLogService $stackLogService): void
+    {
+        $stackLogService->log('setStackLogService');
+        $this->stackLogService = $stackLogService;
+    }
+}
+
+final class ArrayService
+{
+    #[Inject]
+    private StackLogService $stackLogService;
+
+    public function doListToArray(string $list): array
+    {
+        $this->stackLogService->log('doListToArray');
+        return explode(',', $list);
     }
 }

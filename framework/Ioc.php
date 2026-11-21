@@ -22,6 +22,7 @@ class Ioc
     protected array $beanCache = [];
     protected array $resolutionCache = [];
     protected array $getBeanCache = [];
+    protected string $constructingBeanName = '';
     protected array $listeners = [];
     protected array $transients = [];
     protected mixed $parent = null;
@@ -33,6 +34,9 @@ class Ioc
         '/framework/beanproxy.php',
     ];
 
+    /**
+     * The optional beanInitMethod runs before injection; initMethod runs after it.
+     */
     public function __construct(array|string $folders, array $config = [])
     {
         $this->folderArray = is_array($folders) ? array_values($folders) : array_map('trim', explode(',', $folders));
@@ -211,7 +215,17 @@ class Ioc
     public function injectProperties(object|string $bean, array $properties, bool $ignoreMissing = false): object
     {
         if (is_string($bean)) {
-            $bean = $this->containsBean($bean) ? $this->getBean($bean) : $this->construct($bean);
+            if ($this->containsBean($bean)) {
+                $bean = $this->getBean($bean);
+            } else {
+                $previousBeanName = $this->constructingBeanName;
+                $this->constructingBeanName = '';
+                try {
+                    $bean = $this->construct($bean);
+                } finally {
+                    $this->constructingBeanName = $previousBeanName;
+                }
+            }
         }
 
         foreach ($properties as $property => $value) {
@@ -521,30 +535,40 @@ class Ioc
         }
 
         $className = $info['class'];
-        if ($info['isSingleton'] && isset($this->beanCache[$className])) {
-            return $this->beanCache[$className];
+        $cacheKey = $info['name'] ?? $beanName;
+        if ($info['isSingleton'] && isset($this->beanCache[$cacheKey])) {
+            return $this->beanCache[$cacheKey];
         }
 
         $reflection = $info['metadata']['reflection'];
         $arguments = $this->resolveConstructorArguments($beanName, $reflection, $constructorArgs + ($info['overrides'] ?? []));
-        $bean = $this->construct($className, $arguments);
+        $previousBeanName = $this->constructingBeanName;
+        $this->constructingBeanName = $beanName;
+        try {
+            $bean = $this->construct($className, $arguments);
+        } finally {
+            $this->constructingBeanName = $previousBeanName;
+        }
         $target = $this->unwrapBean($bean);
 
         if ($info['isSingleton']) {
-            $this->beanCache[$className] = $bean;
+            $this->beanCache[$cacheKey] = $bean;
         }
 
         try {
+            if (isset($this->config['beanInitMethod']) && method_exists($target, $this->config['beanInitMethod'])) {
+                $this->invokeLifecycleMethod($bean, $target, $this->config['beanInitMethod']);
+            }
             $this->injectByProperties($beanName, $target, $info['metadata']['properties'], $info['overrides'] ?? []);
-            $this->injectBySetters($beanName, $target, $info['metadata']['setters'], $info['overrides'] ?? []);
+            $this->injectBySetters($beanName, $bean, $target, $info['metadata']['setters'], $info['overrides'] ?? []);
             $this->setupInitMethod($beanName, $target);
 
             if (isset($this->config['initMethod']) && method_exists($target, $this->config['initMethod'])) {
-                $target->{$this->config['initMethod']}();
+                $this->invokeLifecycleMethod($bean, $target, $this->config['initMethod']);
             }
         } catch (\Throwable $exception) {
-            if ($info['isSingleton'] && ($this->beanCache[$className] ?? null) === $bean) {
-                unset($this->beanCache[$className]);
+            if ($info['isSingleton'] && ($this->beanCache[$cacheKey] ?? null) === $bean) {
+                unset($this->beanCache[$cacheKey]);
             }
 
             throw $exception;
@@ -602,7 +626,7 @@ class Ioc
         }
     }
 
-    private function injectBySetters(string $beanName, object $bean, array $setters, array $overrides): void
+    private function injectBySetters(string $beanName, object $bean, object $target, array $setters, array $overrides): void
     {
         foreach ($setters as $property => $setter) {
             $value = $overrides[$property] ?? null;
@@ -613,8 +637,17 @@ class Ioc
                 continue;
             }
 
-            $bean->{$setter}($value);
+            $this->invokeLifecycleMethod($bean, $target, $setter, [$value]);
         }
+    }
+
+    private function invokeLifecycleMethod(object $bean, object $target, string $method, array $arguments = []): mixed
+    {
+        if ($bean instanceof BeanProxy) {
+            return $bean->invokeIntercepted($method, $arguments, [$target, $method], true);
+        }
+
+        return $target->{$method}(...$arguments);
     }
 
     private function resolvePropertyBeanName(ReflectionProperty $property): ?string
