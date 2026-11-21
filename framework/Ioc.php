@@ -594,8 +594,9 @@ class Ioc
                 $arguments[] = $overrides[$name];
                 continue;
             }
-            if ($this->containsBean($name)) {
-                $arguments[] = $this->getBean($name);
+            $dependencyName = $this->resolveConstructorBeanName($name);
+            if ($dependencyName !== null) {
+                $arguments[] = $this->getBean($dependencyName);
                 continue;
             }
             if ($parameter->isDefaultValueAvailable()) {
@@ -607,6 +608,34 @@ class Ioc
         }
 
         return $arguments;
+    }
+
+    private function resolveConstructorBeanName(string $name): ?string
+    {
+        if ($this->containsBean($name)) {
+            return $name;
+        }
+
+        $info = $this->getBeanInfo();
+        do {
+            $match = null;
+            foreach (array_keys($info['beanInfo']) as $beanName) {
+                $beanName = (string) $beanName;
+                if (strcasecmp($name, $beanName) !== 0) {
+                    continue;
+                }
+                if ($match !== null) {
+                    throw new RuntimeException("ambiguous bean name: {$name}; matches {$match} and {$beanName}");
+                }
+                $match = $beanName;
+            }
+            if ($match !== null) {
+                return $match;
+            }
+            $info = $info['parent'] ?? null;
+        } while ($info !== null);
+
+        return null;
     }
 
     private function injectByProperties(string $beanName, object $bean, array $properties, array $overrides): void
