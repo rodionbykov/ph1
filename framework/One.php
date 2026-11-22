@@ -23,6 +23,8 @@ class One
     protected ?string $overrideLayoutAction = null;
     protected bool $suppressOtherLayouts = false;
     protected bool $layoutEnabled = true;
+    private ?bool $pendingLayoutEnabled = null;
+    private bool $requestActive = false;
 
     public function __construct(array $config = [])
     {
@@ -41,6 +43,8 @@ class One
             $this->onRequestEnd();
         } catch (Throwable $exception) {
             $this->handleException($exception);
+        } finally {
+            $this->requestActive = false;
         }
 
         return $this->response;
@@ -108,6 +112,17 @@ class One
     public function disableLayout(): void
     {
         $this->layoutEnabled = false;
+        if (!$this->requestActive) {
+            $this->pendingLayoutEnabled = false;
+        }
+    }
+
+    public function enableLayout(): void
+    {
+        $this->layoutEnabled = true;
+        if (!$this->requestActive) {
+            $this->pendingLayoutEnabled = true;
+        }
     }
 
     public function getBeanFactory(string $subsystem = ''): ?Ioc
@@ -279,11 +294,14 @@ class One
 
     public function onRequestEnd(): void
     {
+        $this->requestActive = false;
     }
 
     public function onRequestStart(string $targetPath): void
     {
         $this->setupRequestDefaults();
+        $this->pendingLayoutEnabled = null;
+        $this->requestActive = true;
         $this->setupApplicationWrapper();
         $this->setupRequestWrapper();
     }
@@ -621,7 +639,7 @@ class One
         $this->overrideLayoutAction = null;
         $this->overrideViewAction = null;
         $this->suppressOtherLayouts = false;
-        $this->layoutEnabled = true;
+        $this->layoutEnabled = $this->pendingLayoutEnabled ?? true;
         $this->requestContext = array_merge($_GET, $_POST);
         $this->privateContext = [];
     }

@@ -1,0 +1,1 @@
+[layout]<?= trim($body) ?>[/layout]
