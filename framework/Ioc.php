@@ -500,6 +500,15 @@ class Ioc
             return 'App\\Model\\Beans\\' . str_replace('/', '\\', substr($relativePath, strlen('model/beans/'), -4));
         }
 
+        $filePath = dirname(__DIR__) . '/' . $relativePath;
+        if (is_file($filePath)) {
+            $source = file_get_contents($filePath);
+            if (is_string($source) && preg_match('/^\s*namespace\s+([^;]+)\s*;/m', $source, $matches) === 1) {
+                $className = pathinfo($relativePath, PATHINFO_FILENAME);
+                return trim($matches[1]) . '\\' . $className;
+            }
+        }
+
         return null;
     }
 
@@ -690,7 +699,11 @@ class Ioc
             return $instance->bean ?? $property->getName();
         }
 
-        if ($property->hasDefaultValue() && ($this->config['omitDefaultedProperties'] ?? true)) {
+        if (
+            $property->hasDefaultValue()
+            && ($this->config['omitDefaultedProperties'] ?? true)
+            && ($property->getType() !== null || $property->getDefaultValue() !== null)
+        ) {
             return null;
         }
 
